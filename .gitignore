@@ -1,0 +1,20 @@
+# Binary output
+bin/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Frontend
+web/node_modules/
+web/dist/
+
+# Go
+*.exe
+*.test
+*.out
+
+# OS
+.DS_Store
+Thumbs.db
