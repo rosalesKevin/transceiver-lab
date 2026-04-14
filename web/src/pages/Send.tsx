@@ -5,26 +5,9 @@ import { StateBadge, FormatBadge } from '../components/Badge'
 import { Field } from '../components/Field'
 import { useSessionStore } from '../stores/sessionStore'
 import { useTemplateStore } from '../stores/templateStore'
+import { useSendForm } from '../stores/formStore'
 import { api } from '../lib/api'
 import type { MessageFormat, NetworkInterface, SessionStatus } from '../lib/types'
-
-const DEFAULT_COT = `<?xml version="1.0" encoding="UTF-8"?>
-<event version="2.0" uid="MMT-{{uuid}}" type="a-f-G-U-C"
-      time="{{timestamp}}" start="{{timestamp}}" stale="{{timestamp}}" how="m-g">
-  <point lat="37.7749" lon="-122.4194" hae="0" ce="10" le="10"/>
-  <detail>
-    <contact callsign="ALPHA-1"/>
-    <remarks>MMT transmission</remarks>
-  </detail>
-</event>`
-
-const DEFAULTS: Record<MessageFormat, string> = {
-  cot:     DEFAULT_COT,
-  json:    '{\n  "header": {\n    "msgType": "POSITION_REPORT",\n    "senderId": "UNIT-ALPHA",\n    "timestamp": "{{timestamp}}"\n  },\n  "body": {\n    "latitude": 37.7749,\n    "longitude": -122.4194,\n    "seq": {{seq}}\n  }\n}',
-  vmf:     '4d4d5400 0001 0000',
-  raw:     '',
-  unknown: '',
-}
 
 const FORMAT_LABELS: Record<string, string> = { cot:'CoT', json:'JSON', vmf:'VMF', raw:'Custom' }
 
@@ -42,21 +25,10 @@ function fmtBytes(b: number): string {
 export default function SendPage() {
   const { sessions, fetch: fetchSessions, upsert, remove } = useSessionStore()
   const { templates, fetch: fetchTemplates } = useTemplateStore()
+  const form = useSendForm()
   const [ifaces, setIfaces] = useState<NetworkInterface[]>([])
-
-  const [name, setName]             = useState('TX-1')
-  const [format, setFormat]         = useState<MessageFormat>('cot')
-  const [content, setContent]       = useState(DEFAULT_COT)
-  const [mcastAddr, setMcastAddr]   = useState('239.2.3.1')
-  const [port, setPort]             = useState(6969)
-  const [iface, setIface]           = useState('')
-  const [ttl, setTtl]               = useState(32)
-  const [loopback, setLoopback]     = useState(false)
-  const [sendMode, setSendMode]     = useState<'oneshot' | 'periodic'>('periodic')
-  const [intervalMs, setIntervalMs] = useState(1000)
-  const [dynFields, setDynFields]   = useState(true)
-  const [status, setStatus]         = useState('')
-  const [error, setError]           = useState('')
+  const [status, setStatus] = useState('')
+  const [error, setError]   = useState('')
 
   const sendSessions = sessions.filter((s) => s.mode === 'send')
 
@@ -65,12 +37,22 @@ export default function SendPage() {
     api.network.interfaces().then(setIfaces).catch(() => {})
   }, [])
 
-  const handleFormatChange = (f: MessageFormat) => { setFormat(f); setContent(DEFAULTS[f]) }
+  const portNum     = parseInt(form.port)     || 6969
+  const ttlNum      = parseInt(form.ttl)      || 32
+  const intervalNum = parseInt(form.intervalMs) || 1000
 
   const handleOneShot = async () => {
     setError(''); setStatus('')
     try {
-      const r = await api.network.send({ multicastAddr: mcastAddr, port, interfaceName: iface, ttl, loopback, format, content })
+      const r = await api.network.send({
+        multicastAddr: form.mcastAddr,
+        port: portNum,
+        interfaceName: form.iface,
+        ttl: ttlNum,
+        loopback: form.loopback,
+        format: form.format,
+        content: form.content,
+      })
       setStatus(`Sent ${r.sent} bytes → ${r.dest}:${r.port}`)
     } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Send failed') }
   }
@@ -78,11 +60,27 @@ export default function SendPage() {
   const handleStartSession = async () => {
     setError(''); setStatus('')
     try {
-      const sess = await api.sessions.create({ name, mode:'send', multicastAddr:mcastAddr, port, interfaceName:iface, ttl, loopback, format, content, sendMode, intervalMs, dynamicFields:dynFields })
+      const sess = await api.sessions.create({
+        name: form.name,
+        mode: 'send',
+        multicastAddr: form.mcastAddr,
+        port: portNum,
+        interfaceName: form.iface,
+        ttl: ttlNum,
+        loopback: form.loopback,
+        format: form.format,
+        content: form.content,
+        sendMode: form.sendMode,
+        intervalMs: intervalNum,
+        dynamicFields: form.dynFields,
+      })
       const started = await api.sessions.start(sess.id)
       upsert(started)
       setStatus(`Session "${started.name}" started`)
-      setName(prev => { const m = prev.match(/^(.*?)(\d+)$/); return m ? m[1]+(+m[2]+1) : prev+' 2' })
+      form.setField('name', (() => {
+        const m = form.name.match(/^(.*?)(\d+)$/)
+        return m ? m[1] + (+m[2] + 1) : form.name + ' 2'
+      })())
     } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Failed to start') }
   }
 
@@ -160,16 +158,16 @@ export default function SendPage() {
       <div className="grid grid-cols-2 gap-4">
         {/* Message editor */}
         <div className="flex flex-col">
-          <Card className={`flex flex-col flex-1 border-l-2 ${fmtAccentLeft[format] ?? 'border-l-b1'}`}>
+          <Card className={`flex flex-col flex-1 border-l-2 ${fmtAccentLeft[form.format] ?? 'border-l-b1'}`}>
             <CardHeader>
               <SectionLabel>Payload</SectionLabel>
               <div className="flex items-center gap-0.5">
                 {(['cot','json','vmf','raw'] as MessageFormat[]).map((f) => (
                   <button
                     key={f}
-                    onClick={() => handleFormatChange(f)}
+                    onClick={() => form.setFormat(f)}
                     className={`px-2 py-0.5 font-mono font-medium text-2xs tracking-widest uppercase transition-all border ${
-                      format === f
+                      form.format === f
                         ? 'text-amber border-amber/50 bg-amber/8'
                         : 'text-t3 border-b1 hover:text-t2 hover:border-b2'
                     }`}
@@ -180,7 +178,7 @@ export default function SendPage() {
               </div>
             </CardHeader>
 
-            {format === 'raw' && (
+            {form.format === 'raw' && (
               <div className="px-4 py-1 border-b border-b1 bg-purple/4">
                 <span className="font-mono text-2xs text-purple tracking-wide">
                   {'CUSTOM MODE — verbatim. Tokens: {{timestamp}} {{seq}} {{uuid}}'}
@@ -188,15 +186,18 @@ export default function SendPage() {
               </div>
             )}
 
-            {templates.filter(t => t.format === format).length > 0 && (
+            {templates.filter(t => t.format === form.format).length > 0 && (
               <div className="px-4 py-2 border-b border-b1">
                 <select
                   className="w-full bg-black text-t2 font-mono text-2xs border border-b1 px-2 py-1 outline-none focus:border-amber transition-colors cursor-pointer"
-                  onChange={(e) => { const t = templates.find(x => x.id === e.target.value); if (t) { setFormat(t.format); setContent(t.content) } }}
+                  onChange={(e) => {
+                    const t = templates.find(x => x.id === e.target.value)
+                    if (t) { form.setField('format', t.format); form.setContent(t.content) }
+                  }}
                   defaultValue=""
                 >
                   <option value="" disabled>Load template…</option>
-                  {templates.filter(t => t.format === format).map(t => (
+                  {templates.filter(t => t.format === form.format).map(t => (
                     <option key={t.id} value={t.id}>{t.name}</option>
                   ))}
                 </select>
@@ -206,22 +207,22 @@ export default function SendPage() {
             <textarea
               className="code-area flex-1 border-0 border-t-0"
               rows={14}
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
+              value={form.content}
+              onChange={(e) => form.setContent(e.target.value)}
               spellCheck={false}
-              placeholder={format === 'raw' ? 'Enter any content to transmit…' : undefined}
+              placeholder={form.format === 'raw' ? 'Enter any content to transmit…' : undefined}
             />
 
             <div className="px-4 py-2 border-t border-b1 flex items-center justify-between bg-dark/50">
-              <label className="flex items-center gap-2 cursor-pointer group" onClick={() => setDynFields(v => !v)}>
-                <div className={`w-7 h-3.5 border transition-all duration-200 cursor-pointer relative ${dynFields ? 'bg-amber/20 border-amber/50' : 'bg-b1 border-b1'}`}>
-                  <div className={`absolute top-0.5 w-2.5 h-2.5 transition-all duration-200 ${dynFields ? 'left-[14px] bg-amber' : 'left-0.5 bg-t3'}`} />
+              <label className="flex items-center gap-2 cursor-pointer group" onClick={() => form.setField('dynFields', !form.dynFields)}>
+                <div className={`w-7 h-3.5 border transition-all duration-200 cursor-pointer relative ${form.dynFields ? 'bg-amber/20 border-amber/50' : 'bg-b1 border-b1'}`}>
+                  <div className={`absolute top-0.5 w-2.5 h-2.5 transition-all duration-200 ${form.dynFields ? 'left-[14px] bg-amber' : 'left-0.5 bg-t3'}`} />
                 </div>
                 <span className="font-mono font-medium text-2xs tracking-widest uppercase text-t3 group-hover:text-t2 transition-colors">
                   Dynamic Fields
                 </span>
               </label>
-              <span className="font-mono text-2xs text-t3">{content.length} chars</span>
+              <span className="font-mono text-2xs text-t3">{form.content.length} chars</span>
             </div>
           </Card>
         </div>
@@ -232,18 +233,25 @@ export default function SendPage() {
             <CardHeader><SectionLabel>Network Target</SectionLabel></CardHeader>
             <CardBody className="space-y-3">
               <Field label="Session Name">
-                <input className="field-input" value={name} onChange={e => setName(e.target.value)} />
+                <input className="field-input" value={form.name} onChange={e => form.setField('name', e.target.value)} />
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Multicast Address">
-                  <input className="field-input" value={mcastAddr} onChange={e => setMcastAddr(e.target.value)} />
+                  <input className="field-input" value={form.mcastAddr} onChange={e => form.setField('mcastAddr', e.target.value)} />
                 </Field>
                 <Field label="Port">
-                  <input className="field-input" type="number" value={port} onChange={e => setPort(+e.target.value)} />
+                  <input
+                    className="field-input"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={form.port}
+                    onChange={e => form.setField('port', e.target.value.replace(/[^0-9]/g, ''))}
+                  />
                 </Field>
               </div>
               <Field label="Interface">
-                <select className="field-select" value={iface} onChange={e => setIface(e.target.value)}>
+                <select className="field-select" value={form.iface} onChange={e => form.setField('iface', e.target.value)}>
                   <option value="">Auto-detect</option>
                   {ifaces.filter(i => i.isUp).map(i => (
                     <option key={i.name} value={i.name}>{i.name}{i.addrs[0] ? ` · ${i.addrs[0].split('/')[0]}` : ''}</option>
@@ -252,11 +260,18 @@ export default function SendPage() {
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="TTL">
-                  <input className="field-input" type="number" min={1} max={255} value={ttl} onChange={e => setTtl(+e.target.value)} />
+                  <input
+                    className="field-input"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={form.ttl}
+                    onChange={e => form.setField('ttl', e.target.value.replace(/[^0-9]/g, ''))}
+                  />
                 </Field>
                 <Field label="Loopback">
                   <label className="flex items-center gap-2 mt-2 cursor-pointer">
-                    <input type="checkbox" checked={loopback} onChange={e => setLoopback(e.target.checked)} className="accent-amber w-3 h-3" />
+                    <input type="checkbox" checked={form.loopback} onChange={e => form.setField('loopback', e.target.checked)} className="accent-amber w-3 h-3" />
                     <span className="font-mono text-2xs text-t2">Enable</span>
                   </label>
                 </Field>
@@ -271,9 +286,9 @@ export default function SendPage() {
                 {(['oneshot', 'periodic'] as const).map(m => (
                   <button
                     key={m}
-                    onClick={() => setSendMode(m)}
+                    onClick={() => form.setField('sendMode', m)}
                     className={`flex-1 py-1.5 font-mono font-medium text-2xs tracking-widest uppercase border transition-all ${
-                      sendMode === m
+                      form.sendMode === m
                         ? 'text-amber border-amber/50 bg-amber/8'
                         : 'text-t3 border-b1 hover:border-b2 hover:text-t2'
                     }`}
@@ -282,9 +297,16 @@ export default function SendPage() {
                   </button>
                 ))}
               </div>
-              {sendMode === 'periodic' && (
+              {form.sendMode === 'periodic' && (
                 <Field label="Interval (ms)" hint="Min 100ms">
-                  <input className="field-input" type="number" min={100} step={100} value={intervalMs} onChange={e => setIntervalMs(+e.target.value)} />
+                  <input
+                    className="field-input"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={form.intervalMs}
+                    onChange={e => form.setField('intervalMs', e.target.value.replace(/[^0-9]/g, ''))}
+                  />
                 </Field>
               )}
             </CardBody>
@@ -293,7 +315,7 @@ export default function SendPage() {
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={handleOneShot}>▶ One-Shot</Button>
             <Button variant="primary" onClick={handleStartSession}>
-              {sendMode === 'periodic' ? '⟳ Start Periodic' : '▶ Start Session'}
+              {form.sendMode === 'periodic' ? '⟳ Start Periodic' : '▶ Start Session'}
             </Button>
           </div>
           <p className="font-mono text-2xs text-t3 leading-relaxed">

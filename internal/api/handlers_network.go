@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -62,7 +63,7 @@ func (s *Server) oneShotSend(w http.ResponseWriter, r *http.Request) {
 	s.historyStore.Save(&model.MessageRecord{
 		Direction: "tx",
 		Timestamp: time.Now().UTC(),
-		DestAddr:  req.MulticastAddr,
+		DestAddr:  fmt.Sprintf("%s:%d", req.MulticastAddr, req.Port),
 		Format:    req.Format,
 		Content:   req.Content,
 		RawHex:    hex.EncodeToString(data),

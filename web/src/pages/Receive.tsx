@@ -4,12 +4,14 @@ import { Button } from '../components/Button'
 import { FormatBadge, StateBadge } from '../components/Badge'
 import { Field } from '../components/Field'
 import { useSessionStore } from '../stores/sessionStore'
+import { useReceiveForm } from '../stores/formStore'
 import { api } from '../lib/api'
 import { onRxMessage } from '../lib/ws'
 import type { NetworkInterface, SessionStatus, WsRxMessage } from '../lib/types'
 
 export default function Receive() {
   const { sessions, upsert } = useSessionStore()
+  const form = useReceiveForm()
   const [ifaces, setIfaces] = useState<NetworkInterface[]>([])
   const [messages, setMessages] = useState<WsRxMessage[]>([])
   const [selected, setSelected] = useState<WsRxMessage | null>(null)
@@ -17,12 +19,10 @@ export default function Receive() {
   const [paused, setPaused] = useState(false)
   const pausedRef = useRef(false)
 
-  const [name, setName]           = useState('RX-1')
-  const [mcastAddr, setMcastAddr] = useState('239.2.3.1')
-  const [port, setPort]           = useState(6969)
-  const [iface, setIface]         = useState('')
   const [activeSession, setActiveSession] = useState<SessionStatus | null>(null)
   const [error, setError] = useState('')
+
+  const portNum = parseInt(form.port) || 6969
 
   useEffect(() => {
     api.network.interfaces().then(setIfaces).catch(() => {})
@@ -44,7 +44,7 @@ export default function Receive() {
   const handleStart = async () => {
     setError('')
     try {
-      const sess = await api.sessions.create({ name, mode:'receive', multicastAddr:mcastAddr, port, interfaceName:iface, ttl:32, loopback:false, format:'unknown', content:'', sendMode:'oneshot', intervalMs:1000, dynamicFields:false })
+      const sess = await api.sessions.create({ name: form.name, mode:'receive', multicastAddr: form.mcastAddr, port: portNum, interfaceName: form.iface, ttl:32, loopback:false, format:'unknown', content:'', sendMode:'oneshot', intervalMs:1000, dynamicFields:false })
       const started = await api.sessions.start(sess.id)
       upsert(started); setActiveSession(started)
     } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Failed to start') }
@@ -88,16 +88,24 @@ export default function Receive() {
           <CardHeader><SectionLabel>Listener Config</SectionLabel></CardHeader>
           <CardBody className="space-y-3">
             <Field label="Session Name">
-              <input className="field-input" value={name} onChange={e => setName(e.target.value)} disabled={isRunning} />
+              <input className="field-input" value={form.name} onChange={e => form.setField('name', e.target.value)} disabled={isRunning} />
             </Field>
             <Field label="Multicast Group">
-              <input className="field-input" value={mcastAddr} onChange={e => setMcastAddr(e.target.value)} disabled={isRunning} />
+              <input className="field-input" value={form.mcastAddr} onChange={e => form.setField('mcastAddr', e.target.value)} disabled={isRunning} />
             </Field>
             <Field label="Port">
-              <input className="field-input" type="number" value={port} onChange={e => setPort(+e.target.value)} disabled={isRunning} />
+              <input
+                className="field-input"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={form.port}
+                onChange={e => form.setField('port', e.target.value.replace(/[^0-9]/g, ''))}
+                disabled={isRunning}
+              />
             </Field>
             <Field label="Interface">
-              <select className="field-select" value={iface} onChange={e => setIface(e.target.value)} disabled={isRunning}>
+              <select className="field-select" value={form.iface} onChange={e => form.setField('iface', e.target.value)} disabled={isRunning}>
                 <option value="">Auto-detect</option>
                 {ifaces.filter(i => i.isUp).map(i => (
                   <option key={i.name} value={i.name}>{i.name}</option>
